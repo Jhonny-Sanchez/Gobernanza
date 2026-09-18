@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions for Multi-Tenant Enterprise Security
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOrgMember(orgId) {
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/organizations/$(orgId)/memberships/$(request.auth.uid)) ||
+        request.auth.token.email in get(/databases/$(database)/documents/organizations/$(orgId)).data.allowedEmails
+      );
+    }
+
+    function isOrgAdmin(orgId) {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/organizations/$(orgId)/memberships/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    // Organization details
+    match /organizations/{orgId} {
+      allow read: if isOrgMember(orgId);
+      allow write: if isOrgAdmin(orgId);
+
+      // Memberships
+      match /memberships/{userId} {
+        allow read: if isOrgMember(orgId);
+        allow write: if isOrgAdmin(orgId);
+      }
+
+      // Sub-collections: processes, aiSystems, risks, requirements, controls, evidences, audits, etc.
+      match /{subcollection}/{docId} {
+        allow read: if isOrgMember(orgId);
+        allow create, update: if isOrgMember(orgId);
+        allow delete: if isOrgAdmin(orgId);
+      }
+    }
+
+    // Global user profile
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+  }
+}
